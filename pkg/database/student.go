@@ -230,89 +230,83 @@ func (q *Query) GetStudentsForPdf(unitId string, studentsCount int32) (map[strin
 	return pdfFormats, nil
 }
 
-func (q *Query) GetStudentsAttendanceLogForPdf(studentsCount int32, userTime *models.UserTime, pdfFormats map[string]*models.PdfFormat, date string, slot string) error {
-
+func (q *Query) GetStudentsAttendanceLogForPdf(
+	studentsCount int32,
+	userTime *models.UserTime,
+	pdfFormats map[string]*models.PdfFormat,
+	date string,
+	slot string,
+) error {
 	var wg sync.WaitGroup
+	var mu sync.Mutex
 
-	for studentId, _ := range pdfFormats {
-
+	for studentId := range pdfFormats {
 		wg.Add(1)
+		id := studentId // capture loop variable
 
-		go func(wg *sync.WaitGroup) {
+		go func(id string) {
 			defer wg.Done()
 
-			query := `SELECT login,logout FROM attendance WHERE date=$1 AND student_id=$2`
-			rows, err := q.db.Query(query, date, studentId)
+			rows, err := q.db.Query(
+				`SELECT login, logout FROM attendance WHERE date=$1 AND student_id=$2`,
+				date, id,
+			)
 			if err != nil {
+				// on error, mark as pending
+				mu.Lock()
+				pdfFormats[id].Login = "pending"
+				pdfFormats[id].Logout = "pending"
+				mu.Unlock()
 				return
 			}
-
 			defer rows.Close()
 
-			var isStudentEntryValid bool
+			var (
+				found         bool
+				login, logout string
+			)
 
+			// scan through all entries for this student/date
 			for rows.Next() {
-
-				var studentAttendanceLog models.StudentAttendanceLog
-
-				if err := rows.Scan(&studentAttendanceLog.LoginTime, &studentAttendanceLog.LogoutTime); err != nil {
-					return
+				if err := rows.Scan(&login, &logout); err != nil {
+					break
 				}
-
-				if studentAttendanceLog.LogoutTime == "25:00" {
+				if logout == "25:00" {
 					continue
 				}
 
-				if slot == "morning" {
+				// choose the correct time window
+				var startBound, endBound string
+				switch slot {
+				case "morning":
+					startBound, endBound = userTime.MorningStart, userTime.AfterNoonEnd
+				case "evening":
+					startBound, endBound = userTime.AfterNoonStart, userTime.EveningEnd
+				default: // full day
+					startBound, endBound = userTime.MorningStart, userTime.EveningEnd
+				}
 
-					entryValid, err := utils.CompareWithStandardTime(userTime.MorningStart, userTime.AfterNoonEnd, studentAttendanceLog.LoginTime, studentAttendanceLog.LogoutTime)
-
-					if err != nil {
-						return
-					}
-
-					if entryValid {
-						isStudentEntryValid = true
-						pdfFormats[studentId].Login = studentAttendanceLog.LoginTime
-						pdfFormats[studentId].Logout = studentAttendanceLog.LogoutTime
-						break
-					}
-
-				} else if slot == "evening" {
-					entryValid, err := utils.CompareWithStandardTime(userTime.AfterNoonStart, userTime.EveningEnd, studentAttendanceLog.LoginTime, studentAttendanceLog.LogoutTime)
-
-					if err != nil {
-						return
-					}
-
-					if entryValid {
-						isStudentEntryValid = true
-						pdfFormats[studentId].Login = studentAttendanceLog.LoginTime
-						pdfFormats[studentId].Logout = studentAttendanceLog.LogoutTime
-						break
-					}
-
-				} else {
-					entryValid, err := utils.CompareWithStandardTime(userTime.MorningStart, userTime.EveningEnd, studentAttendanceLog.LoginTime, studentAttendanceLog.LogoutTime)
-
-					if err != nil {
-						return
-					}
-
-					if entryValid {
-						isStudentEntryValid = true
-						pdfFormats[studentId].Login = studentAttendanceLog.LoginTime
-						pdfFormats[studentId].Logout = studentAttendanceLog.LogoutTime
-						break
-					}
+				valid, _ := utils.CompareWithStandardTime(
+					startBound, endBound, login, logout,
+				)
+				if valid {
+					found = true
+					break
 				}
 			}
 
-			if !isStudentEntryValid {
-				pdfFormats[studentId].Login = "pending"
-				pdfFormats[studentId].Logout = "pending"
+			// write back under lock
+			mu.Lock()
+			if found {
+				pdfFormats[id].Login = login
+				pdfFormats[id].Logout = logout
+			} else {
+				pdfFormats[id].Login = "pending"
+				pdfFormats[id].Logout = "pending"
 			}
-		}(&wg)
+			mu.Unlock()
+
+		}(id)
 	}
 
 	wg.Wait()
