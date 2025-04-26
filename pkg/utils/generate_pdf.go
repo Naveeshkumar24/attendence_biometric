@@ -4,6 +4,7 @@ import (
 	"image"
 	"log"
 	"os"
+	"slices"
 	"strconv"
 
 	"github.com/VsenseTechnologies/biometric_http_server/internals/models"
@@ -405,58 +406,50 @@ func splitText(text string, maxLen int) []string {
 }
 
 func generateStudentReport(pdf *gopdf.GoPdf, date string, machineId string, slotStatus string, pdfFormats map[string]*models.PdfFormat) error {
+	// Start the page
 	pdf.AddPage()
+
+	// Display the top metadata (date, machineId, slot)
 	if err := displayDate(pdf, date, machineId, slotStatus); err != nil {
 		return err
 	}
 
+	// Draw the table header for the first page
 	if err := createTableForStudentsfirst(pdf, true); err != nil {
 		return err
 	}
 
-	startY := pdf.GetY() + 0.4
+	// Variables for row tracking
+	startY := 8.0 // Start row after header
+	index := 1
 
-	var index = 0
-	for studentIdKey, _ := range pdfFormats {
+	// Sort keys for consistent order
+	keys := make([]string, 0, len(pdfFormats))
+	for k := range pdfFormats {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys) // requires Go 1.21+
 
-		if pdfFormats[studentIdKey].Login != "pending" {
-			t, err := ConvertTo12HourFormat(pdfFormats[studentIdKey].Login)
-			if err != nil {
-				return err
-			}
+	for _, key := range keys {
+		student := pdfFormats[key]
 
-			pdfFormats[studentIdKey].Login = t
-		}
-
-		if pdfFormats[studentIdKey].Logout != "pending" {
-			t, err := ConvertTo12HourFormat(pdfFormats[studentIdKey].Logout)
-			if err != nil {
-				return err
-			}
-
-			pdfFormats[studentIdKey].Logout = t
-		}
-
-		rowHeight := 1.0 + (float64(len(splitText(pdfFormats[studentIdKey].Name, 27))-1) * 0.5)
-
-		if startY+rowHeight > PAGE_HEIGHT-MARGIN_BOTTOM {
-			pdf.AddPage()
-			startY = 5.7
-			if err := createTableForStudentsfirst(pdf, false); err != nil {
-				return err
-			}
-		}
-
-		startYNewPoint, err := createStudentRow(pdf, strconv.Itoa(index+1), pdfFormats[studentIdKey], startY)
-
+		newY, err := createStudentRow(pdf, strconv.Itoa(index), student, startY)
 		if err != nil {
 			return err
 		}
 
-		startY = startYNewPoint
+		startY = newY
 		index++
+
+		// Add a new page if current page is full
+		if startY > PAGE_HEIGHT-MARGIN_BOTTOM {
+			pdf.AddPage()
+			startY = 5.7 // Y reset after header
+			if err := createTableForStudentsfirst(pdf, false); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
-
 }

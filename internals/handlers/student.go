@@ -117,6 +117,7 @@ func (h *studentHandler) DownloadPdfHandler(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", `attachment; filename="attendance_report.pdf"`)
 	w.WriteHeader(http.StatusOK)
 
 	if _, err := pdf.WriteTo(w); err != nil {

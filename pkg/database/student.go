@@ -206,7 +206,7 @@ func (q *Query) GetUserStandardTime(userId string) (*models.UserTime, error) {
 }
 
 func (q *Query) GetStudentsForPdf(unitId string, studentsCount int32) (map[string]*models.PdfFormat, error) {
-	query := `SELECT student_id, student_name, student_usn FROM ` + unitId + ` ORDER BY student_usn`
+	query := `SELECT student_id, student_name, student_usn FROM ` + unitId + ` ORDER BY student_name`
 
 	rows, err := q.db.Query(query)
 
