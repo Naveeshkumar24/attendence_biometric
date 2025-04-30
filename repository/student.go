@@ -229,16 +229,28 @@ func (repo *studentRepo) DownloadPdf(r *http.Request) (*gopdf.GoPdf, error) {
 	}
 
 	for _, date := range dates {
-		if err := query.GetStudentsAttendanceLogForPdf(studentsCount, userTime, pdfFormats, date, pdfDownloadRequest.Slot); err != nil {
+		// Create a copy of pdfFormats with default "Pending" times
+		dateWisePdfFormats := make(map[string]*models.PdfFormat)
+		for k, v := range pdfFormats {
+			dateWisePdfFormats[k] = &models.PdfFormat{
+				StudentId: v.StudentId,
+				Name:      v.Name,
+				Usn:       v.Usn,
+				Login:     "Pending",
+				Logout:    "Pending",
+			}
+		}
+
+		// This will update only the students who were present
+		if err := query.GetStudentsAttendanceLogForPdf(studentsCount, userTime, dateWisePdfFormats, date, pdfDownloadRequest.Slot); err != nil {
 			log.Println(err)
 			return nil, err
 		}
 
-		if err := utils.GeneratePdf(&pdf, date, strings.ToUpper(pdfDownloadRequest.UnitId), strings.ToUpper(pdfDownloadRequest.Slot), pdfFormats); err != nil {
+		if err := utils.GeneratePdf(&pdf, date, strings.ToUpper(pdfDownloadRequest.UnitId), strings.ToUpper(pdfDownloadRequest.Slot), dateWisePdfFormats); err != nil {
 			log.Println(err)
 			return nil, err
 		}
-
 	}
 
 	return &pdf, nil
